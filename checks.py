@@ -321,7 +321,7 @@ def check_news(st: State, notifier, query: str, strict: bool = True,
         recent.append({"t": now, "title": title})
     if len(uniq) == 1:
         it, title, src = uniq[0]
-        mark = "（权威）" if any(t in src for t in trusted) else ""
+        mark = "·权威" if any(t in src for t in trusted) else ""
         body = title + (f"\n来源: {src}{mark}" if src else "")
         if it.get("summary"):
             body += f"\n{it['summary']}"
@@ -331,7 +331,7 @@ def check_news(st: State, notifier, query: str, strict: bool = True,
         batch = uniq[:MAX_NOTIFY_PER_RUN + 3]
         lines = []
         for i, (it, title, src) in enumerate(batch, 1):
-            mark = "（权威）" if any(t in src for t in trusted) else ""
+            mark = "·权威" if any(t in src for t in trusted) else ""
             text = (it.get("summary") or title)
             lines.append(f"{i}. {text}" + (f"（{src}{mark}）" if src else ""))
         notifier.notify(f"🟢 {query} 新闻 ×{len(batch)}", "\n".join(lines),
