@@ -3,7 +3,9 @@
 main.run() 按 due() 调度调用这里的检查函数；每个函数读 State 增量对比后推送。
 """
 import datetime
+import json
 import logging
+import os
 import re
 import time
 
@@ -57,6 +59,20 @@ def flush_fail_warnings(st: State, notifier) -> None:
 
 # ---------- B站：直播 ----------
 
+_WS_HB = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                      "data", "ws_heartbeat.json")
+
+
+def _ws_alive() -> bool:
+    """直播 WebSocket 常驻进程（live_ws.py）心跳是否新鲜（<3分钟）。
+    活着时直播通知由 WS 毫秒级推送，轮询只负责更新状态不重复推。"""
+    try:
+        hb = json.load(open(_WS_HB, encoding="utf-8"))
+        return time.time() - float(hb.get("ts", 0)) < 180
+    except Exception:
+        return False
+
+
 def check_live(client: BiliClient, st: State, notifier, uid: str, cfg: dict) -> None:
     brief = client.user_live_brief(uid)
     uname = brief["uname"]
@@ -72,15 +88,19 @@ def check_live(client: BiliClient, st: State, notifier, uid: str, cfg: dict) -> 
         log.info("[%s] 直播状态基线: live_status=%s", uname, status)
     else:
         ps = prev.get("status", 0)
+        ws_alive = _ws_alive()
         if ps == 0 and status == 1 and cur:
-            notifier.notify(f"🔴 {uname} 开播了",
-                            f"{title}\n分区: {cur.get('area', '')}",
-                            url=live_url, priority=4, attach=cur.get("cover"),
-                            jump=True)
-        elif ps == 0 and status == 2 and cur:
+            if ws_alive:
+                log.info("[%s] 开播由WS长连接推送，轮询仅记录", uname)
+            else:
+                notifier.notify(f"🔴 {uname} 开播了",
+                                f"{title}\n分区: {cur.get('area', '')}",
+                                url=live_url, priority=4, attach=cur.get("cover"),
+                                jump=True)
+        elif ps == 0 and status == 2 and cur and not ws_alive:
             notifier.notify(f"🟠 {uname} 轮播中", title, url=live_url,
                             priority=3, jump=True)
-        elif ps in (1, 2) and status == 0:
+        elif ps in (1, 2) and status == 0 and not ws_alive:
             notifier.notify(f"⚫ {uname} 下播了",
                             f"刚结束的直播: {prev.get('title') or '未知'}",
                             url=f"https://space.bilibili.com/{uid}", priority=2)
