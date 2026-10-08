@@ -2,7 +2,7 @@
 
 个人新闻监控推送（自用）：公司新闻（官网一手源 + Google News 聚合 + LLM 语义过滤）→ ntfy 手机通知。
 
-- 云端 GitHub Actions 每 5 分钟运行（`.github/workflows/check.yml`），状态回写 `state_cloud.json`
+- 云端 GitHub Actions 每 5 分钟运行（`.github/workflows/check.yml`），状态回写 `data/state_cloud.json`
 - 数据源：官网官方新闻（直解 HTML/RSS）+ Google News 关键词（规则过滤 + LLM 复核 + 同事件去重）
 - 推送：ntfy（topic 通过 Secret 注入，仓库不含任何凭证）
 
