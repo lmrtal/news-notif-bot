@@ -2,8 +2,10 @@ name: check
 
 on:
   schedule:
-    - cron: "4-59/5 * * * *"   # 每5分钟（错开整点）：新闻监控跑在云端，不受本地代理影响
-  workflow_dispatch:            # 支持手动触发
+    # 每2小时接棒一次：每次任务内部循环检查约1小时55分，间隔90秒
+    # （GitHub cron 最短5分钟，用任务内循环把有效轮询间隔压到90秒）
+    - cron: "23 */2 * * *"
+  workflow_dispatch:            # 手动触发 = 单次检查（不走循环）
 
 permissions:
   contents: write               # 允许把云端状态文件回写仓库
@@ -15,7 +17,7 @@ concurrency:
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: 130
     steps:
       - uses: actions/checkout@v4
 
@@ -28,16 +30,25 @@ jobs:
       # 本仓库不含 config.json（隐私），从模板生成后用 Secrets 覆盖敏感字段
       - run: cp config.example.json config.json
 
-      - name: Run news check (scope=news)
-        run: python main.py --scope news
+      - name: News check
         env:
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
           LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
           STATE_FILE: state_cloud.json   # 实际落在 data/state_cloud.json
-
-      - name: Commit state
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data/state_cloud.json
-          git diff --cached --quiet || (git commit -m "update state" && git push)
+          run_once () {
+            python main.py --scope news --force || true
+            git add data/state_cloud.json
+            git diff --cached --quiet || (git commit -m "update state" && git push) || true
+          }
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            end=$((SECONDS + 6900))   # 循环 1小时55分，给接棒任务留余量
+            while [ $SECONDS -lt $end ]; do
+              run_once
+              sleep 90
+            done
+          else
+            run_once   # 手动触发只跑一轮
+          fi
