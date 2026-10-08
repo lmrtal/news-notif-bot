@@ -199,7 +199,8 @@ class BiliClient:
         # 转存最近一次原始数据，便于离线排查解析问题（不提交git）
         try:
             debug = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                 "debug_feed.json")
+                                 "data", "debug_feed.json")
+            os.makedirs(os.path.dirname(debug), exist_ok=True)
             with open(debug, "w", encoding="utf-8") as f:
                 json.dump(data.get("items") or [], f, ensure_ascii=False)
         except Exception:
