@@ -1,0 +1,43 @@
+name: check
+
+on:
+  schedule:
+    - cron: "4-59/5 * * * *"   # 每5分钟（错开整点）：新闻监控跑在云端，不受本地代理影响
+  workflow_dispatch:            # 支持手动触发
+
+permissions:
+  contents: write               # 允许把云端状态文件回写仓库
+
+concurrency:
+  group: check
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install -r requirements.txt
+
+      # 本仓库不含 config.json（隐私），从模板生成后用 Secrets 覆盖敏感字段
+      - run: cp config.example.json config.json
+
+      - name: Run news check (scope=news)
+        run: python main.py --scope news
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+          STATE_FILE: state_cloud.json
+
+      - name: Commit state
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add state_cloud.json
+          git diff --cached --quiet || (git commit -m "update state" && git push)
