@@ -18,11 +18,13 @@ import requests
 
 log = logging.getLogger("notif.push")
 
-_PUSH_LOG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pushes.jsonl")
+_PUSH_LOG = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                         "data", "pushes.jsonl")
 
 
 def _record_push(title: str, body: str, errs: List[str]) -> None:
     try:
+        os.makedirs(os.path.dirname(_PUSH_LOG), exist_ok=True)
         if os.path.exists(_PUSH_LOG) and os.path.getsize(_PUSH_LOG) > 400_000:
             keep = open(_PUSH_LOG, encoding="utf-8").read().splitlines()[-300:]
             open(_PUSH_LOG, "w", encoding="utf-8").write("\n".join(keep) + "\n")
