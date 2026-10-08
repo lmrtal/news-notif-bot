@@ -650,10 +650,5 @@
    }
   ]
  },
- "fail": {
-  "official:zhipu": {
-   "count": 1,
-   "warned": ""
-  }
- }
+ "fail": {}
 }
