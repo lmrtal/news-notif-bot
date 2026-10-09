@@ -976,5 +976,10 @@
    }
   ]
  },
- "fail": {}
+ "fail": {
+  "official:zhipu": {
+   "count": 1,
+   "warned": ""
+  }
+ }
 }
