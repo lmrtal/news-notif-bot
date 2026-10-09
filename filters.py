@@ -47,8 +47,10 @@ DIGEST_KILL_WORDS = ("盘点", "榜单", "服务商", "沽空", "净买入", "�
                      "王炸", "大招", "抢到赚到", "手慢无", "速抢", "炸裂",
                      "逆天", "杀疯", "真香")
 
-# 同一事件被多家媒体报道的标题相似度阈值（字符二元组 Jaccard）
-NEWS_DUP_THRESHOLD = 0.5
+# 同一事件被多家媒体报道的标题相似度阈值（字符二元组 Jaccard）。
+# 实测分布：同事件 0.50~0.58，不同事件 ≤0.24，鸿沟明显，0.35 有大安全余量
+# （曾有一对同事件标题算出 0.4998，卡在 0.5 阈值下漏网）
+NEWS_DUP_THRESHOLD = 0.35
 
 
 def _bigrams(s: str) -> Set[str]:
@@ -60,7 +62,15 @@ def similar_title(a: str, b: str) -> bool:
     A, B = _bigrams(a), _bigrams(b)
     if not A or not B:
         return False
-    return len(A & B) / len(A | B) >= NEWS_DUP_THRESHOLD
+    if len(A & B) / len(A | B) < NEWS_DUP_THRESHOLD:
+        return False
+    # 数字组完全不同（如 GLM-5.4 vs GLM-5.5、8999元 vs 8.18亿）→ 不同事件，
+    # 防止高字面相似度的"不同版本/不同金额"新闻被误合并；有共同数字则不算冲突
+    na = set(re.findall(r"\d+(?:\.\d+)?", a))
+    nb = set(re.findall(r"\d+(?:\.\d+)?", b))
+    if na and nb and not (na & nb):
+        return False
+    return True
 
 
 def is_market_noise(title: str, cfg: dict) -> bool:
