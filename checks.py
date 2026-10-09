@@ -313,7 +313,8 @@ def check_news(st: State, notifier, query: str, strict: bool = True,
     # 推送：传闻单独静默推；正常新闻 1条=原格式，多条=合并成一条摘要，
     # 避免同一轮冒出连环通知
     for it, title, src in rumors[:MAX_NOTIFY_PER_RUN]:
-        body = title + (f"\n来源: {src}" if src else "")
+        mark = "·权威" if any(t in src for t in trusted) else ""
+        body = f"{title}（{src or '谷歌聚合'}{mark}）"
         if it.get("summary"):
             body += f"\n{it['summary']}"
         notifier.notify(f"🟡 {query} 传闻（未经证实）", body,
@@ -322,7 +323,7 @@ def check_news(st: State, notifier, query: str, strict: bool = True,
     if len(uniq) == 1:
         it, title, src = uniq[0]
         mark = "·权威" if any(t in src for t in trusted) else ""
-        body = title + (f"\n来源: {src}{mark}" if src else "")
+        body = f"{title}（{src or '谷歌聚合'}{mark}）"
         if it.get("summary"):
             body += f"\n{it['summary']}"
         notifier.notify(f"🟢 {query} 新闻", body, url=it["link"], priority=3)
@@ -333,7 +334,7 @@ def check_news(st: State, notifier, query: str, strict: bool = True,
         for i, (it, title, src) in enumerate(batch, 1):
             mark = "·权威" if any(t in src for t in trusted) else ""
             text = (it.get("summary") or title)
-            lines.append(f"{i}. {text}" + (f"（{src}{mark}）" if src else ""))
+            lines.append(f"{i}. {text}（{src or '谷歌聚合'}{mark}）")
         notifier.notify(f"🟢 {query} 新闻 ×{len(batch)}", "\n".join(lines),
                         url=batch[0][0]["link"], priority=3)
         for it, title, src in batch:
