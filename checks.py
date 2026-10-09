@@ -12,7 +12,7 @@ import time
 from bilibili import BiliClient, BiliSoftBlock
 from filters import (DEFAULT_RUMOR_WORDS, DEFAULT_TRUSTED_SOURCES,
                      is_market_noise, is_offtopic, similar_title)
-from llm import llm_classify
+from llm import llm_classify, llm_dedup
 from news import (fetch_rss, google_news, official_news,
                   zhipu_article_detail)
 from state import State
@@ -296,23 +296,49 @@ def check_news(st: State, notifier, query: str, strict: bool = True,
                 kept.append((it, title, src))
             normals = kept + normals[12:]
 
-    # 同一事件跨媒体去重：与本轮已保留项、近48小时已推送标题比对相似度，
-    # 只保留第一个报道的（后续不同措辞的转载/跟进不再重复通知）
+    # 同事件去重（三层）：词面相似度 + LLM 语义判定，正式新闻和传闻都过闸
     recent = st.data.setdefault("news_recent", {}).setdefault(key, [])
     now = time.time()
     recent[:] = [r for r in recent if now - r.get("t", 0) < 48 * 3600]
+
+    # 第一层：LLM 语义去重——识别措辞完全不同但同一事件的转载/跟进
+    # （传闻尤其需要：爆料被各家改写得面目全非，词面相似度抓不住）
+    all_cands = [t for _, t, _ in normals] + [t for _, t, _ in rumors]
+    if all_cands and recent:
+        recent_titles = [r["title"] for r in recent]
+        dupset = llm_dedup(all_cands, recent_titles, cfg)
+        if dupset:
+            n0, r0 = len(normals), len(rumors)
+            normals = [x for i, x in enumerate(normals) if i not in dupset]
+            rumors = [x for i, x in enumerate(rumors)
+                      if n0 + i not in dupset]
+            killed = n0 + r0 - len(normals) - len(rumors)
+            dropped += killed
+            log.info("[新闻] LLM语义去重 %d 条", killed)
+
+    # 第二层：词面相似度去重（对最近已推 + 本轮已保留）
+    def _dup_of(title, kept):
+        return (any(similar_title(title, r["title"]) for r in recent)
+                or any(similar_title(title, u[1]) for u in kept))
+
     uniq, dup = [], 0
     for it, title, src in normals:
-        if (any(similar_title(title, r["title"]) for r in recent)
-                or any(similar_title(title, u[1]) for u in uniq)):
+        if _dup_of(title, uniq):
             dup += 1
             log.info("[新闻] 过滤同事件重复报道: %s", title[:60])
             continue
         uniq.append((it, title, src))
+    uniq_r = []
+    for it, title, src in rumors:
+        if _dup_of(title, uniq + uniq_r):
+            dup += 1
+            log.info("[新闻] 过滤重复传闻: %s", title[:60])
+            continue
+        uniq_r.append((it, title, src))
 
     # 推送：传闻单独静默推；正常新闻 1条=原格式，多条=合并成一条摘要，
     # 避免同一轮冒出连环通知
-    for it, title, src in rumors[:MAX_NOTIFY_PER_RUN]:
+    for it, title, src in uniq_r[:MAX_NOTIFY_PER_RUN]:
         body = title
         if it.get("summary"):
             body += f"\n{it['summary']}"
