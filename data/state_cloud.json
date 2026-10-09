@@ -1071,7 +1071,7 @@
  },
  "fail": {
   "official:deepseek": {
-   "count": 1,
+   "count": 2,
    "warned": ""
   }
  }
