@@ -185,13 +185,8 @@ def run(cfg: dict, force: bool = False, scope: str = "all") -> None:
                         label = title.split(" ×")[0]
                         for ln in blines:
                             lines.append(f"▪ {label}｜{ln}")
-                    else:                             # 单条 → 标题+来源压成一行
-                        head = blines[0] if blines else title
-                        src = next((l for l in blines[1:] if l.startswith("来源")), "")
-                        src = src.replace("来源:", "").replace("来源：", "").strip()
-                        if src:
-                            head = f"{head}（{src}）"
-                        lines.append(f"▪ {title}｜{head}")
+                    else:                             # 单条（首行已带（来源·权威））
+                        lines.append(f"▪ {title}｜{blines[0] if blines else title}")
                 pr = 2 if all(i["priority"] <= 2 for i in self.queue) else 3
                 self.inner.notify(f"🟢 新闻速报（{len(self.queue)}条）",
                                   "\n".join(lines), url=url, priority=pr)
