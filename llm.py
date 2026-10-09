@@ -25,6 +25,61 @@ PROMPT = """你是新闻编辑。下面是关键词「{query}」搜出的新闻�
 {items}"""
 
 
+DEDUP_PROMPT = """以下是最近已推送过的新闻标题：
+{recent}
+
+以下是候选新标题（编号A/B/C…）：
+{cands}
+
+判断：哪些候选与任一已推送标题报道的是**同一事件**（同一事件的新措辞、转载、媒体跟进；有实质性新进展的算不同事件，应保留）？
+只输出 JSON：{{"dup":["A","C"]}}；没有重复则输出 {{"dup":[]}}，不要输出其他文字。"""
+
+
+def llm_dedup(titles: List[str], recent_titles: List[str], cfg: dict,
+              timeout: int = 25) -> Optional[set]:
+    """语义去重：识别措辞完全不同但报道同一事件的候选。
+
+    titles: 候选标题列表；recent_titles: 最近已推送标题。
+    返回应丢弃的候选下标集合；未配置/失败返回 None（降级为词面相似度）。
+    """
+    api = cfg.get("llm") or {}
+    key = os.environ.get("LLM_API_KEY") or api.get("api_key") or ""
+    if not api.get("enabled") or not key or not titles or not recent_titles:
+        return None
+    base = (api.get("base_url") or "https://api.deepseek.com").rstrip("/")
+    model = api.get("model") or "deepseek-chat"
+    letters = [chr(ord("A") + i) for i in range(len(titles))]
+    body = {
+        "model": model,
+        "messages": [{"role": "user", "content": DEDUP_PROMPT.format(
+            recent="\n".join(f"{i}. {t}" for i, t in
+                             enumerate(recent_titles[:15], 1)),
+            cands="\n".join(f"{L}. {t}" for L, t in zip(letters, titles)))}],
+        "temperature": 0.1, "max_tokens": 1500,
+    }
+    body["messages"][0]["content"] += "\n/no_think"  # DeepSeek 关闭思维链，直接给答案
+    for attempt in range(2):
+        try:
+            r = requests.post(f"{base}/chat/completions",
+                              headers={"Authorization": f"Bearer {key}"},
+                              json=body, timeout=timeout)
+            r.raise_for_status()
+            msg = r.json()["choices"][0]["message"]
+            text = msg.get("content") or ""
+            if not text.strip() and msg.get("reasoning_content"):
+                text = msg["reasoning_content"]  # 思考型模型把结论留在思考里
+            m = re.search(r"\{[^{}]*\"dup\"[^{}]*\}", text, re.S)
+            if not m:
+                raise ValueError("无JSON: " + text[:80].replace("\n", " "))
+            dup = json.loads(m.group(0)).get("dup") or []
+            return {letters.index(x) for x in dup if x in letters}
+        except Exception as e:
+            if attempt:
+                log.warning("LLM 去重失败，本轮只用词面相似度: %s", str(e)[:120])
+                return None
+    return None
+
+
 def llm_classify(items: List[Dict[str, str]], query: str, cfg: dict,
                  timeout: int = 25) -> Optional[Dict[int, Dict[str, str]]]:
     """items: [{title, source}]。返回 {编号: {"kind","summary"}}；未配置或失败返回 None。"""
