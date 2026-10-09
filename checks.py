@@ -313,19 +313,20 @@ def check_news(st: State, notifier, query: str, strict: bool = True,
     # 推送：传闻单独静默推；正常新闻 1条=原格式，多条=合并成一条摘要，
     # 避免同一轮冒出连环通知
     for it, title, src in rumors[:MAX_NOTIFY_PER_RUN]:
-        mark = "·权威" if any(t in src for t in trusted) else ""
-        body = f"{title}（{src or '谷歌聚合'}{mark}）"
+        body = title
         if it.get("summary"):
             body += f"\n{it['summary']}"
+        body += f"\n来源: {src or '谷歌聚合'}"
         notifier.notify(f"🟡 {query} 传闻（未经证实）", body,
                         url=it["link"], priority=2)
         recent.append({"t": now, "title": title})
     if len(uniq) == 1:
         it, title, src = uniq[0]
         mark = "·权威" if any(t in src for t in trusted) else ""
-        body = f"{title}（{src or '谷歌聚合'}{mark}）"
+        body = title
         if it.get("summary"):
             body += f"\n{it['summary']}"
+        body += f"\n来源: {src or '谷歌聚合'}{mark}"
         notifier.notify(f"🟢 {query} 新闻", body, url=it["link"], priority=3)
         recent.append({"t": now, "title": title})
     elif uniq:
@@ -402,6 +403,7 @@ def check_official(st: State, notifier, key: str, name: str) -> None:
                 attach = image or None
             except Exception:
                 pass  # 详情抓不到就只推标题，不影响通知本身
+        body += f"\n\n来源: {name}"
         notifier.notify(f"🔵 {name}", body, url=it["link"],
                         priority=4, attach=attach)
     seen[:] = list(dict.fromkeys(ids + seen))[:100]
