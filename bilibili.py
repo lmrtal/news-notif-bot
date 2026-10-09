@@ -196,6 +196,20 @@ class BiliClient:
                 continue
             if d:
                 out.append(d)
+        # 空壳动态（feed 被风控脱敏：列表在、内容空）→ 用详情端点补全
+        fixed = []
+        for d in out:
+            if d.get("shell"):
+                try:
+                    full = self._dynamic_detail(d["id"])
+                    if full:
+                        d2 = self._parse_dynamic(full, uid)
+                        if d2 and not d2.get("shell"):
+                            d = d2
+                except Exception:
+                    pass  # 详情也拿不到就保留"暂不可见"提示
+            fixed.append(d)
+        out = fixed
         # 转存最近一次原始数据，便于离线排查解析问题（不提交git）
         try:
             debug = os.path.join(os.path.dirname(os.path.abspath(__file__)),
@@ -224,7 +238,7 @@ class BiliClient:
         article = major.get("article") or {}
         opus = major.get("opus") or {}
         dtype = it.get("type") or ""
-        orig, orig_self = "", False
+        orig, orig_self, shell = "", False, False
         if dtype == "DYNAMIC_TYPE_FORWARD":
             o = it.get("orig") or {}
             orig = o.get("id_str") or ""
@@ -253,9 +267,10 @@ class BiliClient:
                         if (p.get("text") or {}).get("content_str"))
                 text = text or opus.get("title") or desc
             if not pics and not (text or "").strip():
-                # B站偶尔返回空壳动态（图片审核中/仅粉丝可见/已删除），接口不给内容
-                kind, text = "动态", "(内容暂不可见，点开查看)"
+                # B站偶尔返回空壳动态（feed 被风控脱敏），交给 dynamics() 走详情端点补全
+                kind, text, shell = "动态", "(内容暂不可见，点开查看)", True
             else:
+                shell = False
                 kind = "图文动态" if pics else "文字动态"
                 if pics and not (text or "").strip():
                     text = f"[图片x{pics}]"
@@ -274,7 +289,14 @@ class BiliClient:
         return {"id": did, "kind": kind, "text": (text or "").strip()[:400],
                 "author": author, "bvid": bvid,
                 "url": f"https://t.bilibili.com/{did}",
-                "orig": orig, "orig_self": orig_self}
+                "orig": orig, "orig_self": orig_self, "shell": shell}
+
+    def _dynamic_detail(self, dyn_id: str) -> Optional[Dict[str, Any]]:
+        """单条动态详情端点：feed 列表被风控脱敏成空壳时，详情接口仍返回完整内容。"""
+        data = self._wbi_get(
+            "https://api.bilibili.com/x/polymer/web-dynamic/v1/detail",
+            {"id": dyn_id}, referer=f"https://t.bilibili.com/{dyn_id}")
+        return data.get("item") or None
 
     # ---------- 投稿视频 ----------
 
