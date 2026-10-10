@@ -132,6 +132,51 @@ def summary_repeats_title(title: str, summary: str) -> bool:
     return False
 
 
+# 合辑壳子。云端词表会整体覆盖 DIGEST_KILL_WORDS，这几项必须始终生效。
+_DIGEST_SHELLS = ("财闻", "联播", "早知道", "新闻速报", "一周数据", "今日必读")
+_FORECAST_WORDS = ("将售出", "预计销量", "销量预测", "出货量预测", "市场研究机构",
+                   "研报预计", "有望售出")
+_TRIVIAL_LEAKS = ("开机", "欢迎画面", "新字体", "设置步骤", "配色方案")
+_TIP_WORDS = ("闪退", "卡顿", "教程", "技巧", "怎么设置")
+_FRUIT_APPLE = ("苹果树", "果农", "果园", "苹果种植", "种植苹果", "套袋",
+                "苹果汁", "苹果醋")
+
+
+def is_meaningless(title: str, query: str) -> bool:
+    """不是「已经发生的事」：预测、加单传闻、水果同名、合辑、技巧、细枝末节爆料。"""
+    if any(w in title for w in _DIGEST_SHELLS):
+        return True
+    if "（名单）" in title or "(名单)" in title or "融资客" in title or "逆势押注" in title:
+        return True
+    if any(w in title for w in _FORECAST_WORDS):
+        return True
+    if any(w in title for w in ("加单", "砍单", "订单结构", "备货量")):
+        if not any(w in title for w in ("宣布", "官宣", "证实", "公告", "官方")):
+            return True
+    if "过时" in title and any(w in title for w in ("产品", "机型", "列入")):
+        return True
+    if any(w in title for w in _TIP_WORDS) and not any(
+            w in title for w in ("召回", "承认", "道歉")):
+        return True
+    if any(w in title for w in _TRIVIAL_LEAKS) and not any(
+            w in title for w in ("发布", "发售", "开售", "价格", "售价")):
+        return True
+    if any(w in title for w in ("最重磅", "突传大消息")) and not any(
+            w in title for w in ("宣布", "官宣", "正式发布", "已发布")):
+        return True
+    if "苹果" in (query or "") and _is_fruit_apple(title):
+        return True
+    return False
+
+
+def _is_fruit_apple(title: str) -> bool:
+    if "苹果园区" in title:
+        return False
+    if "苹果园" in title:
+        return True
+    return any(w in title for w in _FRUIT_APPLE)
+
+
 def is_offtopic(title: str, query: str, cfg: dict) -> bool:
     """关键词不是标题主语：速览合辑、类比比喻（"美版X"/"X时刻"）、
     顺带点名（出现在后半句）、SEO软文 → 丢弃。"""
