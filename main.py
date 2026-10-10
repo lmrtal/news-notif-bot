@@ -32,16 +32,16 @@ from checks import (check_dynamics, check_live,      # noqa: E402
                     clear_failure, flush_fail_warnings,
                     note_failure)
 from pusher import Notifier                          # noqa: E402
-from state import State                              # noqa: E402
+from state import DATA_DIR, State                    # noqa: E402
 
-DATA_DIR = os.path.join(BASE, "data")
 LOG_DIR = os.path.join(BASE, "logs")
 
 log = logging.getLogger("notif")
 
 # 各数据源检查间隔（分钟）。B站直播接口宽松可高频；动态接口风控严需低频。
-# 定时任务每 2 分钟触发一次，脚本内部按此表决定本轮查什么。
-DEFAULT_INTERVALS = {"live": 2, "dyn": 5, "video": 10, "news": 5,
+# 定时任务每 1 分钟触发一次，脚本内部按此表决定本轮查什么。
+# 开播/下播的秒级通知由 live_ws.py 负责，这里的 live 间隔是它挂掉之后的兜底。
+DEFAULT_INTERVALS = {"live": 1, "dyn": 5, "video": 10, "news": 5,
                      "official": 5, "rss": 15}
 
 
