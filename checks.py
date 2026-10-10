@@ -10,7 +10,8 @@ import time
 
 from bilibili import BiliClient, BiliSoftBlock
 from filters import (DEFAULT_RUMOR_WORDS, DEFAULT_TRUSTED_SOURCES,
-                     is_market_noise, is_offtopic, similar_title)
+                     is_channel_filler, is_market_noise, is_offtopic,
+                     similar_title, summary_repeats_title)
 from llm import llm_classify, llm_dedup
 from news import (fetch_rss, google_news, official_news,
                   zhipu_article_detail)
@@ -306,6 +307,10 @@ def check_news(st: State, notifier, query: str, strict: bool = True,
             dropped += 1
             log.info("[新闻] 过滤行情/转载噪音: %s", title[:60])
             continue
+        if is_channel_filler(title):
+            dropped += 1
+            log.info("[新闻] 过滤渠道铺货: %s", title[:60])
+            continue
         if is_offtopic(title, query, cfg):
             dropped += 1
             log.info("[新闻] 过滤非主语/合辑/软文: %s", title[:60])
@@ -381,8 +386,8 @@ def check_news(st: State, notifier, query: str, strict: bool = True,
     def _body(title, it, src, mark=""):
         body = title
         s = (it.get("summary") or "").strip().rstrip("。")
-        # 摘要只是复述标题时不重复显示
-        if s and s not in title and title.rstrip("。") not in s:
+        # 摘要只是把标题换个说法时不重复显示；多了数字或事实才加一行
+        if s and not summary_repeats_title(title, s):
             body += f"\n{s}"
         if src:
             body += f"\n来源: {src}{mark}"
