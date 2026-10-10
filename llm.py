@@ -31,15 +31,18 @@ DEDUP_PROMPT = """以下是最近已推送过的新闻标题：
 以下是候选新标题（编号A/B/C…）：
 {cands}
 
-判断：哪些候选与任一已推送标题报道的是**同一事件**（同一事件的新措辞、转载、媒体跟进；有实质性新进展的算不同事件，应保留）？
-只输出 JSON：{{"dup":["A","C"]}}；没有重复则输出 {{"dup":[]}}，不要输出其他文字。"""
+判断：哪些候选满足以下任一条件——
+1) 与任一已推送标题报道的是同一事件（新措辞/转载/媒体跟进；有实质性新进展的算不同事件，应保留）
+2) 与其他候选彼此是同一事件（只保留编号靠前的那个）
+只输出 JSON：{{"dup":["A","C"]}}（dup=应丢弃的编号）；没有则输出 {{"dup":[]}}，不要输出其他文字。"""
 
 
 def llm_dedup(titles: List[str], recent_titles: List[str], cfg: dict,
               timeout: int = 25) -> Optional[set]:
-    """语义去重：识别措辞完全不同但报道同一事件的候选。
+    """语义去重：识别措辞完全不同但报道同一事件的候选（对最近已推 + 批内彼此）。
 
-    titles: 候选标题列表；recent_titles: 最近已推送标题。
+    titles: 候选标题列表；recent_titles: 最近已推送标题（新→旧或旧→新均可，
+    内部取最新的 15 条参与比对）。
     返回应丢弃的候选下标集合；未配置/失败返回 None（降级为词面相似度）。
     """
     api = cfg.get("llm") or {}
@@ -53,7 +56,7 @@ def llm_dedup(titles: List[str], recent_titles: List[str], cfg: dict,
         "model": model,
         "messages": [{"role": "user", "content": DEDUP_PROMPT.format(
             recent="\n".join(f"{i}. {t}" for i, t in
-                             enumerate(recent_titles[:15], 1)),
+                             enumerate(recent_titles[-15:], 1)),   # 取最新15条
             cands="\n".join(f"{L}. {t}" for L, t in zip(letters, titles)))}],
         "temperature": 0.1, "max_tokens": 1500,
     }
@@ -94,9 +97,10 @@ def llm_classify(items: List[Dict[str, str]], query: str, cfg: dict,
     body = {
         "model": model,
         "messages": [{"role": "user",
-                      "content": PROMPT.format(query=query, items=lines)}],
+                      "content": PROMPT.format(query=query, items=lines)
+                      + "\n/no_think"}],
         "temperature": 0.1,
-        "max_tokens": 1200,
+        "max_tokens": 1500,
     }
     for attempt in range(2):
         try:
