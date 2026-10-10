@@ -5,7 +5,6 @@ main.run() 按 due() 调度调用这里的检查函数；每个函数读 State �
 import datetime
 import json
 import logging
-import os
 import re
 import time
 
@@ -15,7 +14,7 @@ from filters import (DEFAULT_RUMOR_WORDS, DEFAULT_TRUSTED_SOURCES,
 from llm import llm_classify, llm_dedup
 from news import (fetch_rss, google_news, official_news,
                   zhipu_article_detail)
-from state import State
+from state import WS_HEARTBEAT, WS_PUSHED, State
 
 log = logging.getLogger("notif.checks")
 
@@ -25,9 +24,12 @@ MAX_NOTIFY_PER_RUN = 5   # 每类单次最多推送条数，防止状态丢失�
 # ---------- 失败告警 ----------
 
 def note_failure(st: State, key: str, err: str) -> None:
-    """只累计连续失败次数；告警统一由 flush_fail_warnings 合并发送。"""
+    """累计连续失败。告警看持续时长，不看次数——轮询变快时不能几分钟就响。"""
     f = st.data.setdefault("fail", {}).setdefault(key, {"count": 0, "warned": ""})
+    if not f.get("since"):
+        f["since"] = time.time()
     f["count"] = int(f.get("count", 0)) + 1
+    f["err"] = (err or "")[:180]
 
 
 def clear_failure(st: State, key: str) -> None:
@@ -35,7 +37,7 @@ def clear_failure(st: State, key: str) -> None:
 
 
 def flush_fail_warnings(st: State, notifier) -> None:
-    """连续失败约 1 小时（12 次 × 5 分钟）的数据源合并成一条告警。
+    """同一数据源持续失败满 1 小时才告警。
 
     全局每天最多发一条（不论多少个数据源先后到达阈值）；
     各源的实时失败详情在控制台看。
@@ -43,10 +45,13 @@ def flush_fail_warnings(st: State, notifier) -> None:
     today = datetime.date.today().isoformat()
     if st.data.get("fail_warned_date") == today:
         return  # 今天已经告警过，不再打扰
+    now = time.time()
     bad, keys = [], []
     for key, f in st.data.get("fail", {}).items():
-        if int(f.get("count", 0)) >= 12 and f.get("warned") != today:
-            bad.append(f"· {key} 连续失败 {f['count']} 次")
+        since = float(f.get("since") or 0)
+        sustained = since > 0 and now - since >= 3600 and int(f.get("count", 0)) >= 3
+        if sustained and f.get("warned") != today:
+            bad.append(f"· {key} 已持续失败 {int((now - since) / 60)} 分钟")
             f["warned"] = today
             keys.append(key)
     if bad:
@@ -59,18 +64,55 @@ def flush_fail_warnings(st: State, notifier) -> None:
 
 # ---------- B站：直播 ----------
 
-_WS_HB = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                      "data", "ws_heartbeat.json")
-
-
-def _ws_alive() -> bool:
-    """直播 WebSocket 常驻进程（live_ws.py）心跳是否新鲜（<3分钟）。
-    活着时直播通知由 WS 毫秒级推送，轮询只负责更新状态不重复推。"""
+def _read_json(path: str):
     try:
-        hb = json.load(open(_WS_HB, encoding="utf-8"))
-        return time.time() - float(hb.get("ts", 0)) < 180
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
     except Exception:
+        return None
+
+
+def _ws_alive(uid: str) -> bool:
+    """直播长连接心跳是否新鲜（<3分钟），且这份心跳包含该 UP主。
+
+    旧心跳文件没有 uids 字段时，视为全局在线（兼容未重启的旧进程）。
+    """
+    hb = _read_json(WS_HEARTBEAT)
+    if not hb or time.time() - float(hb.get("ts", 0)) >= 180:
         return False
+    uids = hb.get("uids")
+    if isinstance(uids, list):
+        return str(uid) in {str(u) for u in uids}
+    return True
+
+
+def _ws_pushed(uid: str, status: int) -> bool:
+    """长连接在最近 30 分钟内已经为这个状态发过通知。"""
+    rec = (_read_json(WS_PUSHED) or {}).get(str(uid)) or {}
+    try:
+        same = int(rec.get("status", -1)) == int(status)
+    except (TypeError, ValueError):
+        return False
+    return same and time.time() - float(rec.get("ts") or 0) < 1800
+
+
+def live_transition(prev_status, status, ws_alive: bool, pushed: bool) -> str:
+    """决定轮询要不要发直播通知。返回 start / round / end / ''。
+
+    开播、以及从「直播中」下播：长连接活着，或它刚刚推过同一状态，轮询让路。
+    轮播、以及轮播结束：长连接没有这两个事件，始终由轮询发。
+    """
+    if prev_status is None or prev_status == status:
+        return ""
+    if prev_status == 0 and status == 1:
+        return "" if (ws_alive or pushed) else "start"
+    if prev_status == 0 and status == 2:
+        return "round"
+    if prev_status == 1 and status == 0:
+        return "" if (ws_alive or pushed) else "end"
+    if prev_status == 2 and status == 0:
+        return "end"
+    return ""
 
 
 def check_live(client: BiliClient, st: State, notifier, uid: str, cfg: dict) -> None:
@@ -88,22 +130,22 @@ def check_live(client: BiliClient, st: State, notifier, uid: str, cfg: dict) -> 
         log.info("[%s] 直播状态基线: live_status=%s", uname, status)
     else:
         ps = prev.get("status", 0)
-        ws_alive = _ws_alive()
-        if ps == 0 and status == 1 and cur:
-            if ws_alive:
-                log.info("[%s] 开播由WS长连接推送，轮询仅记录", uname)
-            else:
-                notifier.notify(f"🔴 {uname} 开播了",
-                                f"{title}\n分区: {cur.get('area', '')}",
-                                url=live_url, priority=4, attach=cur.get("cover"),
-                                jump=True)
-        elif ps == 0 and status == 2 and cur and not ws_alive:
+        alive = _ws_alive(uid)
+        kind = live_transition(ps, status, alive, _ws_pushed(uid, status))
+        if kind == "start" and cur:
+            notifier.notify(f"🔴 {uname} 开播了",
+                            f"{title}\n分区: {cur.get('area', '')}",
+                            url=live_url, priority=4, attach=cur.get("cover"),
+                            jump=True)
+        elif kind == "round" and cur:
             notifier.notify(f"🟠 {uname} 轮播中", title, url=live_url,
                             priority=3, jump=True)
-        elif ps in (1, 2) and status == 0 and not ws_alive:
+        elif kind == "end":
             notifier.notify(f"⚫ {uname} 下播了",
                             f"刚结束的直播: {prev.get('title') or '未知'}",
                             url=f"https://space.bilibili.com/{uid}", priority=2)
+        elif kind == "" and ps != status and status in (0, 1) and ps in (0, 1):
+            log.info("[%s] 直播状态 %s→%s 由长连接负责，轮询仅记录", uname, ps, status)
     st.data.setdefault("live", {})[uid] = {
         "status": status, "title": title, "room_id": room_id, "uname": uname}
 
