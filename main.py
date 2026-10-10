@@ -155,48 +155,11 @@ def run(cfg: dict, force: bool = False, scope: str = "all") -> None:
                         note_failure(st, f"bili_{name}_{uid}", str(e))
                 else:
                     clear_failure(st, f"bili_{name}_{uid}")
-    # 跨公司合并：同一轮的多条 🟢/🟡 新闻合并成最多一条通知，
-    # 避免「一到某个时间点连环弹几条」；官方🔵与告警🟤不参与合并
-    class _NewsQueueNotifier:
-        def __init__(self, inner):
-            self.inner = inner
-            self.queue = []
-
-        def notify(self, title, body, url=None, priority=3, attach=None, jump=False):
-            if priority >= 4 or jump or title.startswith(("🔵", "🟤")):
-                return self.inner.notify(title, body, url, priority, attach, jump)
-            self.queue.append({"title": title, "body": body, "url": url,
-                               "priority": priority})
-            return []
-
-        def flush(self):
-            if len(self.queue) <= 1:
-                for it in self.queue:
-                    self.inner.notify(it["title"], it["body"], it["url"],
-                                      it["priority"])
-            elif self.queue:
-                lines, url = [], None
-                for it in self.queue:
-                    if it["url"] and not url:
-                        url = it["url"]
-                    title = it["title"][2:]          # 去掉行首圆点emoji
-                    blines = [l for l in it["body"].split("\n") if l.strip()]
-                    if "×" in title:                  # 公司级多条摘要 → 逐条展开
-                        label = title.split(" ×")[0]
-                        for ln in blines:
-                            lines.append(f"▪ {label}｜{ln}")
-                    else:                             # 单条（首行已带（来源·权威））
-                        lines.append(f"▪ {title}｜{blines[0] if blines else title}")
-                pr = 2 if all(i["priority"] <= 2 for i in self.queue) else 3
-                self.inner.notify(f"🟢 新闻速报（{len(self.queue)}条）",
-                                  "\n".join(lines), url=url, priority=pr)
-            self.queue = []
-
     if scope in ("all", "news"):
-        qn = _NewsQueueNotifier(notifier)
+        # 逐条独立推送（用户要时效性，不做汇总合并；防刷屏靠三层去重）
         for q in cfg.get("news_queries", []):
             if due(f"news:{q}", "news"):
-                check_news(st, qn, q, cfg.get("news_strict_match", True), cfg)
+                check_news(st, notifier, q, cfg.get("news_strict_match", True), cfg)
         for page in cfg.get("official_pages", []):
             key = page.get("key", "")
             name = page.get("name", key)
@@ -209,8 +172,7 @@ def run(cfg: dict, force: bool = False, scope: str = "all") -> None:
                 note_failure(st, f"official:{key}", str(e))
             else:
                 clear_failure(st, f"official:{key}")
-        check_rss_feeds(st, qn, cfg, due)
-        qn.flush()
+        check_rss_feeds(st, notifier, cfg, due)
     flush_fail_warnings(st, notifier)
     st.save()
     if client is not None:
