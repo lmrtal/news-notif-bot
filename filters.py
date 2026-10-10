@@ -85,6 +85,53 @@ def is_market_noise(title: str, cfg: dict) -> bool:
     return title.count("|") + title.count("｜") >= 3
 
 
+# 零售渠道铺货：免税店、机场店上架「热门新品」，没有点名具体产品。
+_CHANNEL_WORDS = ("免税店", "机场店", "门店首发", "专柜首发", "渠道首发")
+_PRODUCT_MARK = re.compile(
+    r"iPhone|iPad|MacBook|Apple Watch|AirPods|Vision|Apple TV|折叠屏|"
+    r"芯片|M\d|A\d{2}",
+    re.I,
+)
+_PUNCT = re.compile(r"[\s!！？?：:，,。.、()（）·|｜；;\"'‘’“”]+")
+# 摘要里这些字经常只是把标题换个说法，不算新事实
+_FILLER = set("预测将了的并及与和在对把被从为是也还已要或称指")
+
+
+def is_channel_filler(title: str) -> bool:
+    """渠道铺货、没有具体产品名的零售稿。点名了型号的保留。"""
+    named = _PRODUCT_MARK.search(title) is not None
+    if any(w in title for w in _CHANNEL_WORDS) and not named:
+        return True
+    return "热门新品" in title and not named
+
+
+def _core(text: str) -> str:
+    text = _PUNCT.sub("", text)
+    return "".join(ch for ch in text if ch not in _FILLER)
+
+
+def summary_repeats_title(title: str, summary: str) -> bool:
+    """摘要没有标题以外的新事实（换个说法、加个「预测」）时不值得再显示一行。"""
+    s = (summary or "").strip().rstrip("。")
+    t = (title or "").strip().rstrip("。")
+    if not s or s in ("（标题未提供细节）", "(标题未提供细节)"):
+        return True
+    if s in t:
+        return True
+    cs, ct = _core(s), _core(t)
+    if not cs or not ct:
+        return False
+    if cs in ct:
+        return True
+    if ct in cs:
+        extra = cs.replace(ct, "", 1)
+        nums_s = set(re.findall(r"\d+(?:\.\d+)?", s))
+        nums_t = set(re.findall(r"\d+(?:\.\d+)?", t))
+        if not (nums_s - nums_t) and len(extra) <= 6:
+            return True
+    return False
+
+
 def is_offtopic(title: str, query: str, cfg: dict) -> bool:
     """关键词不是标题主语：速览合辑、类比比喻（"美版X"/"X时刻"）、
     顺带点名（出现在后半句）、SEO软文 → 丢弃。"""
