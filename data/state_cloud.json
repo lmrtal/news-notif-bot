@@ -1095,12 +1095,5 @@
    }
   ]
  },
- "fail": {
-  "official:zhipu": {
-   "count": 1,
-   "warned": "",
-   "since": 1791662372.316873,
-   "err": "HTTPSConnectionPool(host='www.zhipuai.cn', port=443): Read timed out. (read timeout=20)"
-  }
- }
+ "fail": {}
 }
