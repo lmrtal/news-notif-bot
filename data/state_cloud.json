@@ -1054,5 +1054,12 @@
    }
   ]
  },
- "fail": {}
+ "fail": {
+  "official:zhipu": {
+   "count": 1,
+   "warned": "",
+   "since": 1791676762.364223,
+   "err": "HTTPSConnectionPool(host='www.zhipuai.cn', port=443): Max retries exceeded with url: /zh/news (Caused by ConnectTimeoutError(<HTTPSConnection(host='www.zhipuai.cn', port=443) at 0x"
+  }
+ }
 }
