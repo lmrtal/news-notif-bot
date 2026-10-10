@@ -41,6 +41,36 @@ DEDUP_PROMPT = """以下是最近已推送过的新闻标题：
 只输出 JSON：{{"dup":["A","C"]}}（dup=应丢弃的编号）；没有则输出 {{"dup":[]}}，不要输出其他文字。"""
 
 
+def _message_text(msg: dict) -> str:
+    """思考型模型有时把 JSON 留在 reasoning_content，正文是空的。"""
+    text = (msg.get("content") or "").strip()
+    if text:
+        return text
+    return (msg.get("reasoning_content") or "").strip()
+
+
+def _chat(cfg: dict, content: str, timeout: int) -> Optional[str]:
+    """调一次 OpenAI 兼容接口。未配置返回 None；调用失败抛异常给上层重试。"""
+    api = cfg.get("llm") or {}
+    key = os.environ.get("LLM_API_KEY") or api.get("api_key") or ""
+    if not api.get("enabled") or not key:
+        return None
+    base = (api.get("base_url") or "https://api.deepseek.com").rstrip("/")
+    model = api.get("model") or "deepseek-chat"
+    # /no_think：DeepSeek-flash 不加这句会把 token 耗在自言自语上，不出 JSON
+    body = {
+        "model": model,
+        "messages": [{"role": "user", "content": content.rstrip() + "\n/no_think"}],
+        "temperature": 0.1,
+        "max_tokens": 1500,
+    }
+    r = requests.post(f"{base}/chat/completions",
+                      headers={"Authorization": f"Bearer {key}"},
+                      json=body, timeout=timeout)
+    r.raise_for_status()
+    return _message_text(r.json()["choices"][0]["message"])
+
+
 def llm_dedup(titles: List[str], recent_titles: List[str], cfg: dict,
               timeout: int = 25) -> Optional[set]:
     """语义去重：识别措辞完全不同但报道同一事件的候选（对最近已推 + 批内彼此）。
@@ -49,32 +79,18 @@ def llm_dedup(titles: List[str], recent_titles: List[str], cfg: dict,
     内部取最新的 15 条参与比对）。
     返回应丢弃的候选下标集合；未配置/失败返回 None（降级为词面相似度）。
     """
-    api = cfg.get("llm") or {}
-    key = os.environ.get("LLM_API_KEY") or api.get("api_key") or ""
-    if not api.get("enabled") or not key or not titles or not recent_titles:
+    if not titles or not recent_titles:
         return None
-    base = (api.get("base_url") or "https://api.deepseek.com").rstrip("/")
-    model = api.get("model") or "deepseek-chat"
     letters = [chr(ord("A") + i) for i in range(len(titles))]
-    body = {
-        "model": model,
-        "messages": [{"role": "user", "content": DEDUP_PROMPT.format(
-            recent="\n".join(f"{i}. {t}" for i, t in
-                             enumerate(recent_titles[-15:], 1)),   # 取最新15条
-            cands="\n".join(f"{L}. {t}" for L, t in zip(letters, titles)))}],
-        "temperature": 0.1, "max_tokens": 1500,
-    }
-    body["messages"][0]["content"] += "\n/no_think"  # DeepSeek 关闭思维链，直接给答案
+    content = DEDUP_PROMPT.format(
+        recent="\n".join(f"{i}. {t}" for i, t in
+                         enumerate(recent_titles[-15:], 1)),  # 取最新15条
+        cands="\n".join(f"{L}. {t}" for L, t in zip(letters, titles)))
     for attempt in range(2):
         try:
-            r = requests.post(f"{base}/chat/completions",
-                              headers={"Authorization": f"Bearer {key}"},
-                              json=body, timeout=timeout)
-            r.raise_for_status()
-            msg = r.json()["choices"][0]["message"]
-            text = msg.get("content") or ""
-            if not text.strip() and msg.get("reasoning_content"):
-                text = msg["reasoning_content"]  # 思考型模型把结论留在思考里
+            text = _chat(cfg, content, timeout)
+            if text is None:
+                return None
             m = re.search(r"\{[^{}]*\"dup\"[^{}]*\}", text, re.S)
             if not m:
                 raise ValueError("无JSON: " + text[:80].replace("\n", " "))
@@ -90,29 +106,16 @@ def llm_dedup(titles: List[str], recent_titles: List[str], cfg: dict,
 def llm_classify(items: List[Dict[str, str]], query: str, cfg: dict,
                  timeout: int = 25) -> Optional[Dict[int, Dict[str, str]]]:
     """items: [{title, source}]。返回 {编号: {"kind","summary"}}；未配置或失败返回 None。"""
-    api = cfg.get("llm") or {}
-    key = os.environ.get("LLM_API_KEY") or api.get("api_key") or ""
-    if not api.get("enabled") or not key or not items:
+    if not items:
         return None
-    base = (api.get("base_url") or "https://api.deepseek.com").rstrip("/")
-    model = api.get("model") or "deepseek-chat"
     lines = "\n".join(f'{i}. {it["title"]}（{it.get("source") or "未知"}）'
                       for i, it in enumerate(items, 1))
-    body = {
-        "model": model,
-        "messages": [{"role": "user",
-                      "content": PROMPT.format(query=query, items=lines)
-                      + "\n/no_think"}],
-        "temperature": 0.1,
-        "max_tokens": 1500,
-    }
+    content = PROMPT.format(query=query, items=lines)
     for attempt in range(2):
         try:
-            r = requests.post(f"{base}/chat/completions",
-                              headers={"Authorization": f"Bearer {key}"},
-                              json=body, timeout=timeout)
-            r.raise_for_status()
-            text = r.json()["choices"][0]["message"]["content"]
+            text = _chat(cfg, content, timeout)
+            if text is None:
+                return None
             m = re.search(r"\[.*\]", text, re.S)
             if not m:
                 raise ValueError("响应里没有 JSON 数组")
