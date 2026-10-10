@@ -15,7 +15,7 @@
   "rumor_action": "tag",
   "rumor_words": ["爆料", "传闻", "据传", "网传", "消息人士", "知情人士", "被曝", "疑似", "泄露", "流出", "或将"],
   "trusted_sources": ["财新", "财联社", "证券时报", "上海证券报", "中国证券报", "界面", "澎湃", "新华", "人民日报", "中新网", "第一财经", "每日经济新闻", "21世纪经济报道", "科创板日报", "36氪", "虎嗅", "钛媒体", "智东西", "量子位", "机器之心", "新浪科技", "腾讯科技", "网易科技", "TechWeb", "雷峰网", "IT之家"],
-  "intervals": { "live": 2, "dyn": 5, "video": 10, "news": 5, "official": 5, "rss": 15 },
+  "intervals": { "live": 1, "dyn": 5, "video": 10, "news": 5, "official": 5, "rss": 15 },
   "rss_feeds": [],
   "rsshub_bases": ["https://rsshub.app"],
   "bili_sessdata": "",
