@@ -336,8 +336,7 @@ def check_news(st: State, notifier, query: str, strict: bool = True,
             continue
         uniq_r.append((it, title, src))
 
-    # 推送：传闻单独静默推；正常新闻 1条=原格式，多条=合并成一条摘要，
-    # 避免同一轮冒出连环通知
+    # 推送：逐条独立推送（用户要时效性，不做汇总合并；防刷屏靠三层去重）
     for it, title, src in uniq_r[:MAX_NOTIFY_PER_RUN]:
         body = title
         if it.get("summary"):
@@ -346,8 +345,7 @@ def check_news(st: State, notifier, query: str, strict: bool = True,
         notifier.notify(f"🟡 {query} 传闻（未经证实）", body,
                         url=it["link"], priority=2)
         recent.append({"t": now, "title": title})
-    if len(uniq) == 1:
-        it, title, src = uniq[0]
+    for it, title, src in uniq[:MAX_NOTIFY_PER_RUN + 3]:
         mark = "·权威" if any(t in src for t in trusted) else ""
         body = title
         if it.get("summary"):
@@ -355,17 +353,6 @@ def check_news(st: State, notifier, query: str, strict: bool = True,
         body += f"\n来源: {src or '谷歌聚合'}{mark}"
         notifier.notify(f"🟢 {query} 新闻", body, url=it["link"], priority=3)
         recent.append({"t": now, "title": title})
-    elif uniq:
-        batch = uniq[:MAX_NOTIFY_PER_RUN + 3]
-        lines = []
-        for i, (it, title, src) in enumerate(batch, 1):
-            mark = "·权威" if any(t in src for t in trusted) else ""
-            text = (it.get("summary") or title)
-            lines.append(f"{i}. {text}（{src or '谷歌聚合'}{mark}）")
-        notifier.notify(f"🟢 {query} 新闻 ×{len(batch)}", "\n".join(lines),
-                        url=batch[0][0]["link"], priority=3)
-        for it, title, src in batch:
-            recent.append({"t": now, "title": title})
     del recent[:-40]
     if dup:
         log.info("[新闻] %s 本轮同事件重复 %d 条已合并", query, dup)
